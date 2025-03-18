@@ -1,5 +1,5 @@
 /images
-/venv
+.venv
 app.py
 main.py
 Dockerfile
