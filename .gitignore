@@ -1,0 +1,8 @@
+/images
+/venv
+app.py
+main.py
+Dockerfile
+
+
+.DS_Store
