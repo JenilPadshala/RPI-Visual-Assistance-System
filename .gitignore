@@ -9,7 +9,6 @@ __pycache__/
 
 #Files
 resources/*
-venv_hailo_rpi5_examples/
 model/*
 images/*
 # Distribution / packaging
