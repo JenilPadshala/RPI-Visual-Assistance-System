@@ -4,6 +4,20 @@ import easyocr
 import string
 import re
 from spellchecker import SpellChecker
+import requests
+import json
+import logging
+import os
+
+HOST_IP = os.getenv("HOST_IP")
+OLLAMA_HOST_URL = f"http://{HOST_IP}:11434/api/generate"
+
+# Configure logging
+logging.basicConfig(
+    filename="system.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 
 # Initialize spell checker
 spell = SpellChecker()
@@ -146,23 +160,51 @@ def preprocessing_pipeline(image_path):
     """Full pipeline: load, preprocess, deskew, extract, and clean text."""
     # Load image
     image = load_image(image_path)
+    logging.info("Loaded image")
     # Preprocess for skew detection
     thresh = preprocess_image(image)
+    logging.info("preprocessed image")
     # Detect lines and calculate skew
     lines = detect_lines(thresh)
     skew_angle = calculate_skew_angle(lines)
+    logging.info("Calculated skew")
     # Deskew the image
     deskewed = deskew_image(image, skew_angle)
+    logging.info("Deskewed image")
     # Extract raw text
     raw_text = extract_text(deskewed)
+    logging.info(f"Extracted raw text: {raw_text}")
     # Clean and reconstruct text
     cleaned_text = clean_text(raw_text)
+    logging.info(f"cleaned text: {cleaned_text}")
+    # Check and correct text using LLaVA
+    cleaned_text = check_text_via_llava(cleaned_text)
+    logging.info("cleaned text via llava")
     return cleaned_text
 
+def check_text_via_llava(text, model="mistral", host_url=OLLAMA_HOST_URL):
+    """Checks and corrects the give text using the LLaVA model runing on Ollama and returns the response."""
+
+    prompt = f"""
+    Clean and correct the following text while ensuring it makes sense. Remove any gibberish, repeated characters, or nonsensical parts. Only return the corrected text without any explanations.  
+
+    Text: "{text}"
+    """
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+    }
+
+    response = requests.post(host_url, json=payload)
+    logging.info("Got response")
+    result = response.json()
+    cleaned_text = result["response"].strip().lower()
+    return cleaned_text
 
 # Example usage
 if __name__ == "__main__":
-    image_path = ""  # Replace with your image path
+    image_path = "/home/jenil/Downloads/voice_control_system/images/skewed_img.png"  # Replace with your image path
     cleaned_text = preprocessing_pipeline(image_path)
-    print("Cleaned Extracted Text:")
+    # print("Cleaned Extracted Text:")
     print(cleaned_text)
