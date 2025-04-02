@@ -44,7 +44,7 @@ def extract_text(image_path, model="llava:13b", host_url=OLLAMA_HOST_URL):
 
 
 if __name__ == "__main__":
-    image_path = "/home/jenil/Downloads/voice_control_system/images/scene.png"
+    image_path = os.path.join(os.getcwd(), "images", "scene.png")
     response = extract_text(image_path)
     logging.info(f"Scene described: {response}")
     print(response)

@@ -204,7 +204,7 @@ def check_text_via_llava(text, model="mistral", host_url=OLLAMA_HOST_URL):
 
 # Example usage
 if __name__ == "__main__":
-    image_path = "/home/jenil/Downloads/voice_control_system/images/skewed_img.png"  # Replace with your image path
+    image_path =os.path.join(os.getcwd(), "images", "text.png")
     cleaned_text = preprocessing_pipeline(image_path)
     # print("Cleaned Extracted Text:")
     print(cleaned_text)
