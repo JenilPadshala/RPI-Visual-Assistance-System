@@ -48,7 +48,8 @@ def text_to_speech(text, language='en', slow=False):
 
 def start_object_detection():
     logging.info("Starting Object Detection")
-    return subprocess.Popen(["python3", "objectdetection/detection.py", "-i", "rpi"])
+    # return subprocess.Popen(["python3", "objectdetection/detection.py", "-i", "rpi"])
+    return subprocess.Popen(["python3", "detection_depth/app.py","--input", "rpi", "--apps_infra_path", "/home/jenil/Documents/hailo-rpi5-examples/hailo-apps-infra/"])
 
 
 def run_text_recognition():
