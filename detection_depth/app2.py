@@ -7,7 +7,8 @@
 # from hailo_apps_infra.hailo_rpi_common import app_callback_class, get_caps_from_pad
 # from pipeline import GStreamerDetectionDepthApp
 import gi
-gi.require_version('Gst', '1.0')
+
+gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 import numpy as np
 import pathlib
@@ -17,6 +18,8 @@ from pipeline import GStreamerDetectionDepthApp
 import logging
 from collections import deque
 import json
+import os
+import subprocess
 
 logging.basicConfig(
     filename="system.log",
@@ -24,26 +27,28 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-HAZARDOUS_OBJECTS = {'person', 'bed', 'laptop'}
+HAZARDOUS_OBJECTS = {"person", "bed", "laptop"}
 
 # --- Constants for Direction Detection ---
 DIRECTION_LEFT_THRESHOLD = 0.35  # Object center < 35% of width is LEFT
-DIRECTION_RIGHT_THRESHOLD = 0.65 # Object center > 65% of width is RIGHT
+DIRECTION_RIGHT_THRESHOLD = 0.65  # Object center > 65% of width is RIGHT
 # Object center between these thresholds is FRONT
 # -----------------------------------------
 
 # --- Constants for Motion Detection ---
-MOTION_DEPTH_HISTORY = 5 # Number of depth values to consider
-MOTION_MIN_SAMPLES = 2   # Minimum depth values needed to determine motion
+MOTION_DEPTH_HISTORY = 5  # Number of depth values to consider
+MOTION_MIN_SAMPLES = 2  # Minimum depth values needed to determine motion
 # MOTION_DEPTH_DIFF_THRESHOLD = 0.05 # Minimum difference (in meters?) to consider as actual motion
-MOTION_SLOPE_THRESHOLD = 0.07 # Min slope magnitude (depth units per frame index) to consider as motion
+MOTION_SLOPE_THRESHOLD = (
+    0.07  # Min slope magnitude (depth units per frame index) to consider as motion
+)
 # ------------------------------------
 
 
 class UserData(app_callback_class):
     def __init__(self):
         super().__init__()
-        
+
         self.tracked_hazards = {}
         # Structure per track_id:
         # {
@@ -56,15 +61,16 @@ class UserData(app_callback_class):
         # -----------------------------------------
 
         # --- Buffer for recent depth maps (re-added for center depth calculation) ---
-        self.depth_map_buffer = {} # Stores {frame_num: numpy_depth_array}
-        self.depth_map_buffer_size = 5 # Store last 5 depth maps
-        self.last_processed_depth_frame = -1 # Prevent redundant processing
+        self.depth_map_buffer = {}  # Stores {frame_num: numpy_depth_array}
+        self.depth_map_buffer_size = 5  # Store last 5 depth maps
+        self.last_processed_depth_frame = -1  # Prevent redundant processing
+        self.announced_hazards = set()
         # -------------------------------------------------------------------------
 
     # def calculate_average_depth(self, depth_mat):
     #     depth_values = np.array(depth_mat).flatten()  # Flatten the array and filter out outlier pixels
     #     try:
-    #         m_depth_values = depth_values[depth_values <= np.percentile(depth_values, 95)]  # drop 5% of highest values (outliers)          
+    #         m_depth_values = depth_values[depth_values <= np.percentile(depth_values, 95)]  # drop 5% of highest values (outliers)
     #     except Exception as e:
     #         m_depth_values = np.array([])
     #     if len(m_depth_values) > 0:
@@ -73,27 +79,27 @@ class UserData(app_callback_class):
     #         average_depth = 0  # Default value if no valid pixels are found
     #     logging.info("calculated average depth")
     #     return average_depth
-        
+
 
 def app_callback_detection(pad, info, user_data):
     logging.info("Entered app_callback_detection")
     buffer = info.get_buffer()
     if buffer is None:
         return Gst.PadProbeReturn.OK
-    
-    caps = get_caps_from_pad(pad) # Use the helper function
+
+    caps = get_caps_from_pad(pad)  # Use the helper function
 
     det_width = int(caps[1])
     det_height = int(caps[2])
 
     user_data.increment()
-    frame_num = user_data.frame_count    
+    frame_num = user_data.frame_count
     # print(f"Detection frame_num: {frame_num}")
 
     roi = hailo.get_roi_from_buffer(buffer)
     if roi is None:
         return Gst.PadProbeReturn.OK
-    
+
     detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
     if detections:
         logging.info(f"-- Frame {frame_num} --")
@@ -105,8 +111,7 @@ def app_callback_detection(pad, info, user_data):
             track_objs = detection.get_objects_typed(hailo.HAILO_UNIQUE_ID)
             if track_objs:
                 track_id = track_objs[0].get_id()
-            
-            
+
             is_hazard = label in HAZARDOUS_OBJECTS
             has_valid_id = track_id != -1
 
@@ -117,10 +122,12 @@ def app_callback_detection(pad, info, user_data):
                         "latest_center": None,
                         "center_depths": deque(maxlen=MOTION_DEPTH_HISTORY),
                         "motion": "Undetermined",
-                        "direction": "Undetermined"
+                        "direction": "Undetermined",
                     }
-                    logging.info(f"Started tracking new hazardous object: Label='{label}', TrackID={track_id}")
-                
+                    logging.info(
+                        f"Started tracking new hazardous object: Label='{label}', TrackID={track_id}"
+                    )
+
                 hazard_data = user_data.tracked_hazards[track_id]
                 # ---------------------------------------------------------
 
@@ -128,7 +135,7 @@ def app_callback_detection(pad, info, user_data):
                 cx = bbox.xmin() + bbox.width() / 2
                 cy = bbox.ymin() + bbox.height() / 2
                 latest_center = (round(cx, 2), round(cy, 2))
-                hazard_data["latest_center"] = latest_center # Update latest center
+                hazard_data["latest_center"] = latest_center  # Update latest center
                 # -----------------------------------------
 
                 # --- Determine Direction (Left/Right/Front) ---
@@ -150,22 +157,30 @@ def app_callback_detection(pad, info, user_data):
                 if depth_data is not None:
                     try:
                         depth_h, depth_w = depth_data.shape
-                        if depth_w > 0 and depth_h > 0: # Check depth map dimensions
+                        if depth_w > 0 and depth_h > 0:  # Check depth map dimensions
                             scaling_factor_x = depth_w / det_width
                             scaling_factor_y = depth_h / det_height
                             scaled_cx = cx * scaling_factor_x
                             scaled_cy = cy * scaling_factor_y
                             depth_x = max(0, min(int(round(scaled_cx)), depth_w - 1))
                             depth_y = max(0, min(int(round(scaled_cy)), depth_h - 1))
-                            current_center_depth = float(depth_data[depth_y, depth_x]) # Get depth
+                            current_center_depth = float(
+                                depth_data[depth_y, depth_x]
+                            )  # Get depth
                             # Append valid depth to history
-                            hazard_data["center_depths"].append(round(current_center_depth, 2))
+                            hazard_data["center_depths"].append(
+                                round(current_center_depth, 2)
+                            )
                         else:
-                             logging.warning(f"Invalid depth map dimensions ({depth_w}x{depth_h}) for frame {frame_num}")
+                            logging.warning(
+                                f"Invalid depth map dimensions ({depth_w}x{depth_h}) for frame {frame_num}"
+                            )
 
                     except Exception as e:
-                        logging.error(f"Error calculating center depth for hazard ID {track_id}, Frame {frame_num}: {e}")
-                        current_center_depth = None # Ensure it remains None on error
+                        logging.error(
+                            f"Error calculating center depth for hazard ID {track_id}, Frame {frame_num}: {e}"
+                        )
+                        current_center_depth = None  # Ensure it remains None on error
                 # ------------------------------------
 
                 # # --- Determine Motion (Towards/Away/Stationary) ---
@@ -192,7 +207,6 @@ def app_callback_detection(pad, info, user_data):
                 #      hazard_data["motion"] = "Undetermined"
                 # # -------------------------------------------------
 
-
                 # --- Determine Motion using Linear Regression ---
                 depth_history = hazard_data["center_depths"]
                 if len(depth_history) >= MOTION_MIN_SAMPLES:
@@ -214,30 +228,108 @@ def app_callback_detection(pad, info, user_data):
                         # logging.debug(f"[Frame {frame_num}, ID {track_id}] Motion Check: History={list(depth_history)}, Slope={slope:.3f}, Motion={hazard_data['motion']}")
 
                     except Exception as e:
-                        logging.error(f"[Frame {frame_num}, ID {track_id}] Error during motion regression: {e}")
-                        hazard_data["motion"] = "Undetermined" # Fallback on error
+                        logging.error(
+                            f"[Frame {frame_num}, ID {track_id}] Error during motion regression: {e}"
+                        )
+                        hazard_data["motion"] = "Undetermined"  # Fallback on error
                 else:
                     # Not enough data points for reliable regression
                     hazard_data["motion"] = "Undetermined"
                 # -------------------------------------------------
 
+                # --- Trigger TTS Announcement via Subprocess ---
+                label = hazard_data.get("label")
+                motion = hazard_data.get("motion")
+                direction = hazard_data.get("direction")
+
+                if (
+                    label
+                    and motion
+                    and motion != "Undetermined"
+                    and direction
+                    and direction != "Undetermined"
+                    and track_id not in user_data.announced_hazards
+                ):
+                    # Construct the announcement message (same logic as before)
+                    if motion == "Stationary":
+                        if direction == "Front":
+                            announcement = f"{label} is stationary in front of you."
+                        announcement = f"{label} is {motion.lower()} on your {direction.lower()} side."
+                    elif motion == "Towards":
+                        if direction == "Front":
+                            announcement = (
+                                f"{label} is moving towards you in front of you."
+                            )
+                        else:
+                            announcement = f"{label} is moving towards you on your {direction.lower()} side."
+                    elif motion == "Away":
+                        if direction == "Front":
+                            announcement = (
+                                f"{label} is moving away from you in front of you."
+                            )
+                        else:
+                            announcement = f"{label} is moving away from you on your {direction.lower()} side."
+                    else:
+                        announcement = f"{label} is on your {direction.lower()} side, motion {motion.lower()}."
+
+                    logging.info(
+                        f"Dispatching TTS for Track ID {track_id}: '{announcement}'"
+                    )
+
+                    # --- Call tts_handler.py ---
+                    try:
+                        app_dir = pathlib.Path(__file__).parent.resolve()
+                        tts_script_path = app_dir / "tts_handler.py"
+                        command = [
+                            "python3",
+                            str(tts_script_path),
+                            "--text",
+                            announcement,
+                        ]
+                        process = subprocess.Popen(command)
+                        logging.info(
+                            f"Launched TTS handler process (PID: {process.pid}) for Track ID {track_id}"
+                        )
+                        # Mark this track ID as announced immediately after launching
+                        # (assuming launch success means it *will* be announced)
+                        user_data.announced_hazards.add(track_id)
+                        logging.info(f"Track ID {track_id} marked as announced.")
+                    except FileNotFoundError:
+                        # Error if python3 executable or the script itself is not found
+                        logging.error(
+                            f"TTS Error: 'python3' or '{tts_script_path}' not found. Cannot launch TTS handler."
+                        )
+                        print(
+                            f"TTS Error: Could not find python3 or tts_handler.py. Please ensure both are available."
+                        )
+                    except Exception as e:
+                        # Catch other potential errors during subprocess creation
+                        logging.error(
+                            f"TTS Error: Failed to launch TTS handler subprocess for Track ID {track_id}: {e}"
+                        )
+                        print(
+                            f"Error: Failed to launch TTS subprocess. Check system.log."
+                        )
+                    # --- End Subprocess Call ---
+
+                # --- End TTS Section ---
+
     return Gst.PadProbeReturn.OK
+
 
 def app_callback_depth(pad, info, user_data):
     logging.info("Entered app_callback_depth")
     buffer = info.get_buffer()
     if buffer is None:
         return Gst.PadProbeReturn.OK
-    
+
     frame_num_depth = user_data.frame_count
     if frame_num_depth <= user_data.last_processed_depth_frame:
         return Gst.PadProbeReturn.OK
-    
 
     roi = hailo.get_roi_from_buffer(buffer)
     if roi is None:
         return Gst.PadProbeReturn.OK
-    
 
     depth_mats = roi.get_objects_typed(hailo.HAILO_DEPTH_MASK)
 
@@ -250,7 +342,7 @@ def app_callback_depth(pad, info, user_data):
         if height > 0 and width > 0:
             # --- Store depth map in buffer ---
             try:
-                depth_data_np = np.array(depth_data_raw).reshape((height,width))
+                depth_data_np = np.array(depth_data_raw).reshape((height, width))
                 user_data.depth_map_buffer[frame_num_depth] = depth_data_np
                 # print(user_data.depth_map_buffer)
                 print(user_data.depth_map_buffer[frame_num_depth].size)
@@ -259,19 +351,23 @@ def app_callback_depth(pad, info, user_data):
                     oldest_frame = min(user_data.depth_map_buffer.keys())
                     del user_data.depth_map_buffer[oldest_frame]
             except Exception as e:
-                logging.error(f"Error processing/storing depth map for frame {frame_num_depth}: {e}")
+                logging.error(
+                    f"Error processing/storing depth map for frame {frame_num_depth}: {e}"
+                )
             # --------------------------------
         else:
-            logging.warning(f"[Depth Frame ~{frame_num_depth}] Received depth map with invalid dimensions: {width}x{height}")
+            logging.warning(
+                f"[Depth Frame ~{frame_num_depth}] Received depth map with invalid dimensions: {width}x{height}"
+            )
 
         # # Assume one depth map per buffer from this branch
-        # depth_mat_obj = depth_mats[0] 
-        # depth_data = depth_mat_obj.get_data() 
+        # depth_mat_obj = depth_mats[0]
+        # depth_data = depth_mat_obj.get_data()
         # height = depth_mat_obj.get_height()
         # width = depth_mat_obj.get_width()
-        
+
         # if height > 0 and width > 0:
-        #     avg_depth = user_data.calculate_average_depth(depth_data)            
+        #     avg_depth = user_data.calculate_average_depth(depth_data)
         #     # logging.info depth info separately
 
         #     logging.info(f"[Depth Branch Data - Frame {frame_num}]") # Frame num might differ slightly if branches run at different speeds
@@ -280,10 +376,7 @@ def app_callback_depth(pad, info, user_data):
         #      logging.info(f"[Depth Branch Data - Frame {frame_num}]")
         #      logging.info("  Warning: Received depth map with invalid dimensions.")
 
-   
-
-    return Gst.PadProbeReturn.OK   
-
+    return Gst.PadProbeReturn.OK
 
 
 # if __name__ == "__main__":
@@ -306,7 +399,7 @@ if __name__ == "__main__":
         app_callback_dep=app_callback_depth,
         user_data=user_data_obj,
         app_path=app_dir,
-        parser=None
+        parser=None,
     )
 
     logging.info("main: Starting GStreamer pipeline run...")
@@ -325,12 +418,16 @@ if __name__ == "__main__":
         if user_data_obj.tracked_hazards:
             # Log structure for readability
             for track_id, hazard_data in user_data_obj.tracked_hazards.items():
-                 logging.info(f"  --- Track ID: {track_id} (Label: {hazard_data.get('label', 'N/A')}) ---")
-                 logging.info(f"    Latest Center (Cx, Cy): {hazard_data.get('latest_center', 'N/A')}")
-                 logging.info(f"    Direction: {hazard_data.get('direction', 'N/A')}")
-                 logging.info(f"    Motion: {hazard_data.get('motion', 'N/A')}")
-                 depth_list = list(hazard_data.get('center_depths', []))
-                 logging.info(f"    Last {len(depth_list)} Center Depths: {depth_list}")
+                logging.info(
+                    f"  --- Track ID: {track_id} (Label: {hazard_data.get('label', 'N/A')}) ---"
+                )
+                logging.info(
+                    f"    Latest Center (Cx, Cy): {hazard_data.get('latest_center', 'N/A')}"
+                )
+                logging.info(f"    Direction: {hazard_data.get('direction', 'N/A')}")
+                logging.info(f"    Motion: {hazard_data.get('motion', 'N/A')}")
+                depth_list = list(hazard_data.get("center_depths", []))
+                logging.info(f"    Last {len(depth_list)} Center Depths: {depth_list}")
 
             # Print as JSON to standard output
             try:
@@ -342,7 +439,7 @@ if __name__ == "__main__":
                         "latest_center": data.get("latest_center"),
                         "direction": data.get("direction"),
                         "motion": data.get("motion"),
-                        "center_depths": list(data.get("center_depths", []))
+                        "center_depths": list(data.get("center_depths", [])),
                     }
 
                 print("\n--- JSON Summary of Tracked Hazards ---")
