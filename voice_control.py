@@ -9,6 +9,10 @@ from gtts import gTTS
 import vosk
 import requests
 
+######
+import base64
+import requests
+
 # Configure logging
 logging.basicConfig(
     filename="system.log",
@@ -54,12 +58,25 @@ def start_object_detection():
 
 def run_text_recognition():
     logging.info("Running Text Recognition")
-    result = subprocess.run(
-        ["python3", "textrecognition/text_recognition.py"], 
-        capture_output=True, 
-        text=True
+    # result = subprocess.run(
+    #     ["python3", "textrecognition/text_recognition.py"], 
+    #     capture_output=True, 
+    #     text=True
+    # )
+    # return result.stdout.strip()  # Capture cleaned text output
+    file_path = os.path.join(os.getcwd(), "images", "text.jpg")
+    print(file_path)
+    with open(file_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+    
+    response = requests.post(
+        f"http://{HOST_IP}:8000/upload-image/", json={"image_base64": encoded_string}
     )
-    return result.stdout.strip()  # Capture cleaned text output
+
+    if response.status_code == 200:
+        result = response.json()
+    return result['text']
+
 
 def run_scenic_understanding():
     logging.info("Running Scenic Understanding")
@@ -156,7 +173,7 @@ def analyze_intent(command):
 def capture_image(feature: str):
     # using imagesnap for macos and fswebcam for linux
     if feature == "text_recognition":
-        image_path = "images/text.png"
+        image_path = "images/text.jpg"
     else:
         image_path = "images/scene.png"
     try:
