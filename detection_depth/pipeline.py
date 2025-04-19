@@ -110,6 +110,11 @@ class GStreamerDetectionDepthApp(GStreamerApp):
              logging.error("Failed to connect probe to any callback element.")
 
     def get_pipeline_string(self):
+        
+        target_width = 320
+        target_height = 256
+        logging.info(f"Setting target pipeline dimensions to: {target_width}x{target_height}")
+
         source_pipeline = SOURCE_PIPELINE(self.video_source, self.video_width, self.video_height)
         detection_pipeline = INFERENCE_PIPELINE(
             hef_path=self.detection_hef_path,
@@ -132,9 +137,17 @@ class GStreamerDetectionDepthApp(GStreamerApp):
         user_callback_pipeline_2 = USER_CALLBACK_PIPELINE(name="branch_2_user_callback")
         display_pipeline_2 = DISPLAY_PIPELINE(video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps, name="depth_display")
 
+        scaler_pipeline = (
+            f'videoconvert ! videoscale ! '
+            f'video/x-raw,width={target_width},height={target_height} ! '
+            f'videoconvert'
+        )
+
         logging.info("got pipeline_strings")
         return (
-            f'{source_pipeline} ! tee name=t '
+            f'{source_pipeline} ! '
+            f'{scaler_pipeline} ! '  # Resize the stream here
+            f'tee name=t '
             # branch 1
             f't. ! queue ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {user_callback_pipeline_1} ! {display_pipeline_1} '
             # branch 2
