@@ -46,7 +46,7 @@ def text_to_speech(text, language='en', slow=False):
     # Play the audio file
     subprocess.run(["mpg321", "-q", audio_file])  # -q for quiet mode
     
-    # Optional: Remove the file after playing to avoid clutter
+    # Remove the file after playing to avoid clutter
     os.remove(audio_file)
     logging.info("Text to speech conversion complete")
 
@@ -153,9 +153,7 @@ def analyze_intent(command):
         f"Respond with ONLY one of the following words: 'text_recognition', 'scenic_understanding', or 'unknown'. "
         f"Do not provide any explanation."
     )
-    # response = ollama.chat(
-    #     model="mistral", messages=[{"role": "user", "content": prompt}]
-    # )
+    
     payload = {
     "model": "mistral",
     "prompt": prompt,
@@ -171,7 +169,6 @@ def analyze_intent(command):
     return intent
 
 def capture_image(feature: str):
-    # using imagesnap for macos and fswebcam for linux
     if feature == "text_recognition":
         image_path = "images/text.jpg"
     else:
