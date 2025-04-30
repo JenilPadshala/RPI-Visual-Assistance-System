@@ -1,11 +1,3 @@
-# import gi
-# gi.require_version('Gst', '1.0')
-# from gi.repository import Gst
-# import numpy as np
-# import pathlib
-# import hailo
-# from hailo_apps_infra.hailo_rpi_common import app_callback_class, get_caps_from_pad
-# from pipeline import GStreamerDetectionDepthApp
 import gi
 
 gi.require_version("Gst", "1.0")
@@ -60,7 +52,7 @@ class UserData(app_callback_class):
         # }
         # -----------------------------------------
 
-        # --- Buffer for recent depth maps (re-added for center depth calculation) ---
+        # --- Buffer for recent depth maps (for center depth calculation) ---
         self.depth_map_buffer = {}  # Stores {frame_num: numpy_depth_array}
         self.depth_map_buffer_size = 5  # Store last 5 depth maps
         self.last_processed_depth_frame = -1  # Prevent redundant processing
@@ -250,7 +242,7 @@ def app_callback_detection(pad, info, user_data):
                     and direction != "Undetermined"
                     and track_id not in user_data.announced_hazards
                 ):
-                    # Construct the announcement message (same logic as before)
+                    # Construct the announcement message
                     if motion == "Stationary":
                         if direction == "Front":
                             announcement = f"{label} is stationary in front of you."
@@ -290,12 +282,10 @@ def app_callback_detection(pad, info, user_data):
                         logging.info(
                             f"Launched TTS handler process (PID: {process.pid}) for Track ID {track_id}"
                         )
-                        # Mark this track ID as announced immediately after launching
-                        # (assuming launch success means it *will* be announced)
+                        # Marking this track ID as announced immediately after launching
                         user_data.announced_hazards.add(track_id)
                         logging.info(f"Track ID {track_id} marked as announced.")
                     except FileNotFoundError:
-                        # Error if python3 executable or the script itself is not found
                         logging.error(
                             f"TTS Error: 'python3' or '{tts_script_path}' not found. Cannot launch TTS handler."
                         )
@@ -303,7 +293,6 @@ def app_callback_detection(pad, info, user_data):
                             f"TTS Error: Could not find python3 or tts_handler.py. Please ensure both are available."
                         )
                     except Exception as e:
-                        # Catch other potential errors during subprocess creation
                         logging.error(
                             f"TTS Error: Failed to launch TTS handler subprocess for Track ID {track_id}: {e}"
                         )
@@ -359,33 +348,8 @@ def app_callback_depth(pad, info, user_data):
             logging.warning(
                 f"[Depth Frame ~{frame_num_depth}] Received depth map with invalid dimensions: {width}x{height}"
             )
-
-        # # Assume one depth map per buffer from this branch
-        # depth_mat_obj = depth_mats[0]
-        # depth_data = depth_mat_obj.get_data()
-        # height = depth_mat_obj.get_height()
-        # width = depth_mat_obj.get_width()
-
-        # if height > 0 and width > 0:
-        #     avg_depth = user_data.calculate_average_depth(depth_data)
-        #     # logging.info depth info separately
-
-        #     logging.info(f"[Depth Branch Data - Frame {frame_num}]") # Frame num might differ slightly if branches run at different speeds
-        #     logging.info(f"  Depth Map: {width}x{height}, Avg Depth: {avg_depth:.2f}, Center Depth: {avg_depth:.2f}")
-        # else:
-        #      logging.info(f"[Depth Branch Data - Frame {frame_num}]")
-        #      logging.info("  Warning: Received depth map with invalid dimensions.")
-
     return Gst.PadProbeReturn.OK
 
-
-# if __name__ == "__main__":
-#     logging.info("main")
-#     user_data_obj = UserData()
-#     app = GStreamerDetectionDepthApp(app_callback_detection, app_callback_depth, user_data_obj, pathlib.Path(__file__).parent.resolve())
-#     logging.info("starting run")
-#     app.run()
-#     logging.info("Exiting...")
 
 # --- Main execution block ---
 if __name__ == "__main__":
