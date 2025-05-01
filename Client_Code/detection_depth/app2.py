@@ -133,9 +133,9 @@ def app_callback_detection(pad, info, user_data):
                 # --- Determine Direction (Left/Right/Front) ---
                 relative_x = cx
                 if relative_x < DIRECTION_LEFT_THRESHOLD:
-                    hazard_data["direction"] = "Right"
-                elif relative_x > DIRECTION_RIGHT_THRESHOLD:
                     hazard_data["direction"] = "Left"
+                elif relative_x > DIRECTION_RIGHT_THRESHOLD:
+                    hazard_data["direction"] = "Right"
                 else:
                     hazard_data["direction"] = "Front"
                 # ---------------------------------------------
@@ -207,7 +207,7 @@ def app_callback_detection(pad, info, user_data):
                         y_values = np.array(depth_history)
                         x_values = np.arange(len(y_values))
 
-                        # Perform linear regression (degree 1)
+                        # Perform linear regression
                         slope, intercept = np.polyfit(x_values, y_values, 1)
 
                         # Determine motion based on the slope
